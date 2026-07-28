@@ -91,6 +91,11 @@ def test_cli_help_epilog_examples_validate(monkeypatch):
     monkeypatch.setattr(socket, "socket", _boom)
     # Resolve the judge key for the example that relies on env (configs/openai.yaml).
     monkeypatch.setenv("OPENAI_API_KEY", "sk-doc-env")
+    # The examples use paths (e.g. "configs/openai.yaml") exactly as documented in
+    # README.md, which instructs `cd OckBench` before invoking `python main.py`.
+    # Validate them under that same documented cwd, regardless of where the test
+    # runner itself was invoked from (e.g. a wrapping repo's root).
+    monkeypatch.chdir(CONFIGS_DIR.parent)
 
     assert HELP_EXAMPLES  # non-empty
     for description, argv in HELP_EXAMPLES:
