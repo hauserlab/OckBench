@@ -191,6 +191,20 @@ class ModelResponse(BaseModel):
     # and `EvaluationResult.reasoning_text`.
     reasoning_text: str = Field("")
 
+    # Client-side, backend-agnostic timing (computed off the actual stream in
+    # `_dispatch` — never trusted from server-reported stats, which some
+    # backends strip). `ttft`/`decode_time`/`decode_tps` are additive/Optional
+    # (default None) so every non-chat_completion provider (gemini,
+    # openai-responses, anthropic — none of which compute these yet) and every
+    # existing `_create_error_response` call site is unaffected. `latency`
+    # above remains the total-wall-clock field (back-compat name); ttft +
+    # decode_time split that same interval. See
+    # `ockbench_harness/tools/bench_utils.py::timed_call` for the mirrored
+    # formulas this parity fix reuses.
+    ttft: Optional[float] = Field(None)
+    decode_time: Optional[float] = Field(None)
+    decode_tps: Optional[float] = Field(None)
+
 
 class EvaluationResult(BaseModel):
     problem_id: Any = Field(...)
@@ -213,6 +227,15 @@ class EvaluationResult(BaseModel):
 
     tokens: TokenUsage = Field(...)
     latency: float = Field(...)
+
+    # Client-side timing siblings to `latency` (see `ModelResponse.ttft` for
+    # the formulas + why they're computed client-side). Optional/None so a
+    # pre-fix cache/result row (or a non-chat_completion provider) still loads.
+    # This is the data the completeness gate (`ockbench_harness/
+    # completeness_gate.py`) enforces every SUCCESS row carries going forward.
+    ttft: Optional[float] = Field(None)
+    decode_time: Optional[float] = Field(None)
+    decode_tps: Optional[float] = Field(None)
 
     error: Optional[str] = Field(None)
     extraction_method: Optional[str] = Field(None)

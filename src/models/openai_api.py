@@ -1,5 +1,6 @@
 """OpenAI-compatible chat completions client (OpenAI, vLLM, SGLang, OpenRouter)."""
 import logging
+import time
 from typing import Any, Dict
 
 import httpx
@@ -63,6 +64,18 @@ class OpenAIClient(BaseModelClient):
             model_name = self.model
             usage_chunk = None
 
+            # Client-side, backend-agnostic timing (mirrors
+            # ockbench_harness/tools/bench_utils.py::timed_call's formulas
+            # exactly): some backends strip server-reported stats, so ttft/
+            # decode timing is measured here off the actual stream, never
+            # trusted from a server-reported field. `ttft` is the wall-clock to
+            # the FIRST content OR reasoning delta (a reasoning model's <think>
+            # channel starts the clock just as much as a content delta would;
+            # bench_utils.py only counted content, understating a reasoning
+            # model's true first-token latency).
+            t0 = time.time()
+            ttft: float | None = None
+
             stream = await self.client.chat.completions.create(**request)
             async for chunk in stream:
                 if chunk.model:
@@ -70,17 +83,23 @@ class OpenAIClient(BaseModelClient):
                 if chunk.choices:
                     delta = chunk.choices[0].delta
                     if delta and delta.content:
+                        if ttft is None:
+                            ttft = time.time() - t0
                         text += delta.content
                     if delta:
                         reasoning_delta = getattr(delta, "reasoning_content", None)
                         if reasoning_delta is None and getattr(delta, "model_extra", None):
                             reasoning_delta = delta.model_extra.get("reasoning_content")
                         if reasoning_delta:
+                            if ttft is None:
+                                ttft = time.time() - t0
                             reasoning_text += reasoning_delta
                     if chunk.choices[0].finish_reason:
                         finish_reason = chunk.choices[0].finish_reason
                 if chunk.usage:
                     usage_chunk = chunk
+
+            total_latency = time.time() - t0
 
             if usage_chunk:
                 tokens = self._extract_tokens(usage_chunk, text)
@@ -89,6 +108,14 @@ class OpenAIClient(BaseModelClient):
                     prompt_tokens=0, answer_tokens=0, reasoning_tokens=0,
                     output_tokens=0, total_tokens=0,
                 )
+
+            # decode_time/decode_tps, mirroring bench_utils.py::timed_call. ttft
+            # is None only when no content/reasoning delta ever arrived (always
+            # an error response below — see empty_error), in which case there
+            # was no observed decode phase: decode_time falls back to 0 rather
+            # than the whole total_latency.
+            decode_time = total_latency - (ttft if ttft is not None else total_latency)
+            decode_tps = tokens.output_tokens / decode_time if decode_time > 0 else 0.0
 
             # Surface empty-text outcomes as errors so --cache resume will retry
             # them. Common on reasoning models that spend the whole budget on
@@ -118,7 +145,10 @@ class OpenAIClient(BaseModelClient):
                 text=text,
                 reasoning_text=reasoning_text,
                 tokens=tokens,
-                latency=0,
+                latency=total_latency,
+                ttft=round(ttft, 3) if ttft is not None else None,
+                decode_time=round(decode_time, 3),
+                decode_tps=round(decode_tps, 2),
                 model=model_name,
                 finish_reason=finish_reason or "stop",
                 error=empty_error,
