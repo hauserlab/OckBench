@@ -85,6 +85,18 @@ class BenchmarkConfig(BaseModel):
     experiment_name: Optional[str] = Field(None)
     notes: Optional[str] = Field(None)
 
+    # Persist each result's full reasoning/thinking text (see
+    # `EvaluationResult.reasoning_text`). Defaults OFF at this canonical-config
+    # level: persisting full reasoning for every row can balloon result-file/
+    # cache storage at scale, and this field is invisible to a plain YAML
+    # config or script that predates it. The harness driver
+    # (`ockbench_harness/driver.py`) flips this ON by default for its
+    # canary/dev-probe path specifically, where seeing WHY a model answered
+    # matters more than storage cost; large/production batches opt back out
+    # explicitly. Deliberately excluded from run identity (`core/identity.py`)
+    # — it doesn't change the request or the score, only what gets written.
+    capture_reasoning: bool = Field(False)
+
     @model_validator(mode='before')
     @classmethod
     def _reject_legacy_reasoning_fields(cls, data: Any) -> Any:
@@ -170,6 +182,14 @@ class ModelResponse(BaseModel):
     model: str = Field(...)
     finish_reason: Optional[str] = Field(None)
     error: Optional[str] = Field(None)
+    # The model's reasoning/thinking-channel text (e.g. `reasoning_content`
+    # stream deltas on a reasoning model), accumulated verbatim alongside
+    # `text`. Defaults to "" so every existing ModelResponse call site (all
+    # providers except chat_completion, plus the base-class error responses)
+    # is unaffected. Whether this ever reaches a PERSISTED result is a
+    # separate, config-gated decision — see `BenchmarkConfig.capture_reasoning`
+    # and `EvaluationResult.reasoning_text`.
+    reasoning_text: str = Field("")
 
 
 class EvaluationResult(BaseModel):
@@ -179,6 +199,14 @@ class EvaluationResult(BaseModel):
     ground_truth: Any = Field(...)
 
     model_response: str = Field(...)
+    # The model's reasoning/thinking text for this problem, persisted only when
+    # `BenchmarkConfig.capture_reasoning` is True for the run that produced it
+    # (see `runner.BenchmarkRunner`) — None when capture is off, or when the
+    # provider/response carried no reasoning. Deliberately excluded from run
+    # identity (`core/identity.py`): toggling capture changes what gets written,
+    # not what the model was asked or how it was scored, so it must not block
+    # cache resume.
+    reasoning_text: Optional[str] = Field(None)
     extracted_answer: Optional[Any] = Field(None)
 
     correct: bool = Field(...)

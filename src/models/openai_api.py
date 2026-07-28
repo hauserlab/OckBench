@@ -58,7 +58,7 @@ class OpenAIClient(BaseModelClient):
     async def _dispatch(self, request: Dict[str, Any]) -> ModelResponse:
         try:
             text = ""
-            reasoning_chars = 0
+            reasoning_text = ""
             finish_reason = None
             model_name = self.model
             usage_chunk = None
@@ -76,7 +76,7 @@ class OpenAIClient(BaseModelClient):
                         if reasoning_delta is None and getattr(delta, "model_extra", None):
                             reasoning_delta = delta.model_extra.get("reasoning_content")
                         if reasoning_delta:
-                            reasoning_chars += len(reasoning_delta)
+                            reasoning_text += reasoning_delta
                     if chunk.choices[0].finish_reason:
                         finish_reason = chunk.choices[0].finish_reason
                 if chunk.usage:
@@ -96,12 +96,12 @@ class OpenAIClient(BaseModelClient):
             empty_error = None
             if not text:
                 if finish_reason == "length":
-                    suffix = " after reasoning_content stream" if reasoning_chars else ""
+                    suffix = " after reasoning_content stream" if reasoning_text else ""
                     empty_error = (
                         "empty_response_length_finish: finish_reason=length with no content "
                         f"emitted{suffix} (likely reasoning consumed entire output budget)"
                     )
-                elif tokens.reasoning_tokens > 0 or reasoning_chars > 0:
+                elif tokens.reasoning_tokens > 0 or reasoning_text:
                     empty_error = (
                         "empty_response_reasoning_only: model emitted reasoning tokens but "
                         f"no content (finish_reason={finish_reason or 'unknown'})"
@@ -116,6 +116,7 @@ class OpenAIClient(BaseModelClient):
 
             return ModelResponse(
                 text=text,
+                reasoning_text=reasoning_text,
                 tokens=tokens,
                 latency=0,
                 model=model_name,

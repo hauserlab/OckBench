@@ -86,11 +86,18 @@ class BenchmarkRunner:
         tokens: TokenUsage,
         latency: float,
         finish_reason: Optional[str],
+        reasoning_text: Optional[str] = None,
     ) -> EvaluationResult:
-        """The single eval→result field mapping, shared by fresh runs and rejudges."""
+        """The single eval→result field mapping, shared by fresh runs and rejudges.
+
+        ``reasoning_text`` is the already-gated value (None when
+        ``config.capture_reasoning`` is False, or for a rejudge, whatever the
+        original cached row carried) — this helper does no gating itself.
+        """
         return EvaluationResult(
             **problem_fields,
             model_response=model_response,
+            reasoning_text=reasoning_text,
             extracted_answer=eval_result.extracted_answer,
             correct=eval_result.is_correct,
             tokens=tokens,
@@ -133,11 +140,18 @@ class BenchmarkRunner:
                 max_output_tokens = self._calculate_max_output_tokens(formatted_prompt)
                 response = await self.client.generate(formatted_prompt, max_output_tokens)
 
+                # Gate: only carry the model's reasoning text into the persisted
+                # record when this run's config opts in (see
+                # `BenchmarkConfig.capture_reasoning`). The response itself always
+                # has it in memory (cheap); the gate is about what gets WRITTEN.
+                reasoning_text = response.reasoning_text if self.config.capture_reasoning else None
+
                 if response.error:
                     logger.error(f"Error for problem {problem.id}: {response.error}")
                     result = EvaluationResult(
                         **problem_fields,
-                        model_response=response.text or "", extracted_answer=None, correct=False,
+                        model_response=response.text or "", reasoning_text=reasoning_text,
+                        extracted_answer=None, correct=False,
                         tokens=response.tokens, latency=response.latency, error=response.error,
                         extraction_method="error", finish_reason=response.finish_reason,
                     )
@@ -152,6 +166,7 @@ class BenchmarkRunner:
                         problem_fields, eval_result,
                         model_response=response.text, tokens=response.tokens,
                         latency=response.latency, finish_reason=response.finish_reason,
+                        reasoning_text=reasoning_text,
                     )
 
                 self._append_to_cache(result)
@@ -195,6 +210,11 @@ class BenchmarkRunner:
                     eval_result,
                     model_response=cached.model_response, tokens=cached.tokens,
                     latency=cached.latency, finish_reason=cached.finish_reason,
+                    # A rejudge re-scores an already-generated answer; it never
+                    # re-calls the model, so there is nothing new to gate — carry
+                    # forward whatever the original generation persisted (already
+                    # gated at that time).
+                    reasoning_text=cached.reasoning_text,
                 )
             except Exception as e:
                 logger.error(f"Exception re-judging cached problem {problem.id}: {e}")
