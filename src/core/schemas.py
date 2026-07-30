@@ -205,6 +205,20 @@ class ModelResponse(BaseModel):
     decode_time: Optional[float] = Field(None)
     decode_tps: Optional[float] = Field(None)
 
+    # The OTHER channel: llama.cpp/llama-server's SERVER-REPORTED `timings`
+    # object, captured verbatim (see `_dispatch` in `models/openai_api.py`),
+    # carrying (among other things) `draft_n`/`draft_n_accepted` for
+    # speculative-decoding acceptance rate. Unlike ttft/decode_time/decode_tps
+    # above — which are deliberately NEVER trusted from server-reported stats
+    # because some backends strip them — this field IS that server-reported
+    # channel; it exists specifically to carry what only the server knows.
+    # It is therefore backend-dependent and legitimately None: LM Studio's
+    # `/v1` endpoint strips it entirely, so a value of None here means
+    # "this backend didn't report it", not "nothing happened". Additive/
+    # Optional so every non-llama.cpp backend and every pre-fix call site is
+    # unaffected.
+    server_timings: Optional[dict[str, Any]] = Field(None)
+
 
 class EvaluationResult(BaseModel):
     problem_id: Any = Field(...)
@@ -236,6 +250,13 @@ class EvaluationResult(BaseModel):
     ttft: Optional[float] = Field(None)
     decode_time: Optional[float] = Field(None)
     decode_tps: Optional[float] = Field(None)
+
+    # Server-reported sibling to the client-side trio above — see
+    # `ModelResponse.server_timings` for why this is a DIFFERENT trust channel
+    # (backend-dependent, legitimately None) and never enters the completeness
+    # gate's required-fields set (`ockbench_harness/completeness_gate.py`):
+    # requiring it would fail every LM-Studio-backed row.
+    server_timings: Optional[dict[str, Any]] = Field(None)
 
     error: Optional[str] = Field(None)
     extraction_method: Optional[str] = Field(None)

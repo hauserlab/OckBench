@@ -117,6 +117,30 @@ class OpenAIClient(BaseModelClient):
             decode_time = total_latency - (ttft if ttft is not None else total_latency)
             decode_tps = tokens.output_tokens / decode_time if decode_time > 0 else 0.0
 
+            # Server-reported channel (the OTHER half, distinct from the
+            # client-side ttft/decode_time/decode_tps above): llama.cpp/
+            # llama-server attaches a non-standard `timings` object to the
+            # final streamed chunk carrying speculative-decoding counters
+            # (`draft_n`/`draft_n_accepted`, among others). The OpenAI SDK has
+            # no schema slot for it, so it lands in pydantic's `model_extra` —
+            # and different llama.cpp builds have put it in different places,
+            # so probe defensively, in order: the chunk itself, then the
+            # chunk's `usage` object. `getattr(..., "model_extra", None) or {}`
+            # guards both "attribute doesn't exist on this object" (a plain
+            # OpenAI/vLLM/SGLang response) and "model_extra is None" (SDK
+            # default when nothing extra was sent). Falls through to `None` —
+            # never `{}`, never a zero-filled counters dict — a backend that
+            # never sends `timings` at all (LM Studio's `/v1` endpoint strips
+            # it) is legitimately unknown, not zero.
+            server_timings: dict[str, Any] | None = None
+            if usage_chunk is not None:
+                chunk_extra = getattr(usage_chunk, "model_extra", None) or {}
+                server_timings = chunk_extra.get("timings")
+                if server_timings is None:
+                    usage_obj = getattr(usage_chunk, "usage", None)
+                    usage_extra = getattr(usage_obj, "model_extra", None) or {}
+                    server_timings = usage_extra.get("timings")
+
             # Surface empty-text outcomes as errors so --cache resume will retry
             # them. Common on reasoning models that spend the whole budget on
             # reasoning_content and end the stream without a content delta.
@@ -149,6 +173,7 @@ class OpenAIClient(BaseModelClient):
                 ttft=round(ttft, 3) if ttft is not None else None,
                 decode_time=round(decode_time, 3),
                 decode_tps=round(decode_tps, 2),
+                server_timings=server_timings,
                 model=model_name,
                 finish_reason=finish_reason or "stop",
                 error=empty_error,

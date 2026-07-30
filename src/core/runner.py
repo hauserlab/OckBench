@@ -90,16 +90,18 @@ class BenchmarkRunner:
         ttft: Optional[float] = None,
         decode_time: Optional[float] = None,
         decode_tps: Optional[float] = None,
+        server_timings: Optional[Dict[str, Any]] = None,
     ) -> EvaluationResult:
         """The single eval→result field mapping, shared by fresh runs and rejudges.
 
         ``reasoning_text`` is the already-gated value (None when
         ``config.capture_reasoning`` is False, or for a rejudge, whatever the
         original cached row carried) — this helper does no gating itself.
-        ``ttft``/``decode_time``/``decode_tps`` are threaded the same way
-        ``tokens``/``latency`` are: siblings computed once per model call (see
-        ``ModelResponse``), carried forward unchanged on a rejudge (no new
-        model call happens there, so there is nothing new to time).
+        ``ttft``/``decode_time``/``decode_tps``/``server_timings`` are threaded
+        the same way ``tokens``/``latency`` are: siblings computed once per
+        model call (see ``ModelResponse``), carried forward unchanged on a
+        rejudge (no new model call happens there, so there is nothing new to
+        time or re-report).
         """
         return EvaluationResult(
             **problem_fields,
@@ -112,6 +114,7 @@ class BenchmarkRunner:
             ttft=ttft,
             decode_time=decode_time,
             decode_tps=decode_tps,
+            server_timings=server_timings,
             extraction_method=eval_result.extraction_method,
             judge_reasoning=eval_result.judge_reasoning,
             error=eval_result.error,
@@ -164,6 +167,7 @@ class BenchmarkRunner:
                         extracted_answer=None, correct=False,
                         tokens=response.tokens, latency=response.latency, error=response.error,
                         ttft=response.ttft, decode_time=response.decode_time, decode_tps=response.decode_tps,
+                        server_timings=response.server_timings,
                         extraction_method="error", finish_reason=response.finish_reason,
                     )
                 else:
@@ -179,6 +183,7 @@ class BenchmarkRunner:
                         latency=response.latency, finish_reason=response.finish_reason,
                         reasoning_text=reasoning_text,
                         ttft=response.ttft, decode_time=response.decode_time, decode_tps=response.decode_tps,
+                        server_timings=response.server_timings,
                     )
 
                 self._append_to_cache(result)
@@ -230,6 +235,7 @@ class BenchmarkRunner:
                     # Same reasoning: no new model call, so the timing already
                     # banked on the original generation carries forward unchanged.
                     ttft=cached.ttft, decode_time=cached.decode_time, decode_tps=cached.decode_tps,
+                    server_timings=cached.server_timings,
                 )
             except Exception as e:
                 logger.error(f"Exception re-judging cached problem {problem.id}: {e}")

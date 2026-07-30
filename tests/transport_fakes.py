@@ -34,18 +34,28 @@ class _Details:
 
 
 class _Usage:
-    def __init__(self, prompt_tokens, completion_tokens, reasoning_tokens, total_tokens):
+    def __init__(self, prompt_tokens, completion_tokens, reasoning_tokens, total_tokens,
+                 model_extra=None):
         self.prompt_tokens = prompt_tokens
         self.completion_tokens = completion_tokens
         self.total_tokens = total_tokens
         self.completion_tokens_details = _Details(reasoning_tokens)
+        # Mirrors the OpenAI SDK's pydantic `model_extra`: unknown fields the
+        # server sent that aren't in the SDK's own schema (e.g. llama-server's
+        # non-standard `timings` object nested under `usage`). None when the
+        # fake represents a chunk/usage carrying no extra fields at all.
+        self.model_extra = model_extra
 
 
 class _Chunk:
-    def __init__(self, choices=None, usage=None, model="fake-model"):
+    def __init__(self, choices=None, usage=None, model="fake-model", model_extra=None):
         self.choices = choices or []
         self.usage = usage
         self.model = model
+        # Same `model_extra` shape as `_Usage` above, but at the CHUNK level —
+        # some backends attach `timings` to the top-level completion chunk
+        # rather than nesting it under `usage`.
+        self.model_extra = model_extra
 
 
 class _FakeStream:
